@@ -161,6 +161,14 @@ h2o.getFutureModel <- function(object) {
               stop("argument \"training_frame\" must be a valid H2OFrame or ID")
             })
   }
+  if (!is.null(params$validation_frame)) {
+    if (!inherits(params$validation_frame, "H2OFrame"))
+        tryCatch(params$validation_frame <- h2o.getFrame(params$validation_frame),
+                 error = function(err) {
+                   stop("argument \"validation_frame\" must be a valid H2OFrame or key")
+                 })
+  }
+
   # Check if specified model request is for supervised algo
   isSupervised <- if (!is.null(is_supervised)) is_supervised else .isSupervised(algo, params)
 
@@ -190,46 +198,16 @@ h2o.getFutureModel <- function(object) {
 }
 
 .h2o.checkModelParameters <- function(algo, allParams, params, hyper_params = list()) {
+  # First verify all parameters
   error <- lapply(allParams, function(i) {
     e <- ""
-    if (i$required && !((i$name %in% names(params)) || (i$name %in% names(hyper_params)))) {
-      e <- paste0("argument \"", i$name, "\" is missing, with no default\n")
-    } else if (i$name %in% names(params)) {
-      # changing Java types to R types
-      mapping <- .type.map[i$type,]
-      type    <- mapping[1L, 1L]
-      scalar  <- mapping[1L, 2L]
-      if (is.na(type))
-        stop("Cannot find type ", i$type, " in .type.map")
-      if (scalar) { # scalar == TRUE
-        if (type == "H2OModel")
-            type <-  "character"
-        if (!inherits(params[[i$name]], type))
-          e <- paste0("\"", i$name , "\" must be of type ", type, ", but got ", class(params[[i$name]]), ".\n")
-        else if ((length(i$values) > 1L) && !(params[[i$name]] %in% i$values)) {
-          e <- paste0("\"", i$name,"\" must be in")
-          for (fact in i$values)
-            e <- paste0(e, " \"", fact, "\",")
-          e <- paste(e, "but got", params[[i$name]])
-        }
-        if (inherits(params[[i$name]], 'numeric') && params[[i$name]] ==  Inf)
-          params[[i$name]] <<- "Infinity"
-        else if (inherits(params[[i$name]], 'numeric') && params[[i$name]] == -Inf)
-          params[[i$name]] <<- "-Infinity"
-      } else {      # scalar == FALSE
-        k = which(params[[i$name]] == Inf | params[[i$name]] == -Inf)
-        if (length(k) > 0)
-          for (n in k)
-            if (params[[i$name]][n] == Inf)
-              params[[i$name]][n] <<- "Infinity"
-            else
-              params[[i$name]][n] <<- "-Infinity"
-        if (!inherits(params[[i$name]], type))
-          e <- paste0("vector of ", i$name, " must be of type ", type, ", but got ", class(params[[i$name]]), ".\n")
-        else if (type == "character")
-          params[[i$name]] <<- .collapse.char(params[[i$name]])
-        else
-          params[[i$name]] <<- .collapse(params[[i$name]])
+    name <- i$name
+    if (i$required && !((name %in% names(params)) || (name %in% names(hyper_params)))) {
+      e <- paste0("argument \"", name, "\" is missing, with no default\n")
+    } else if (name %in% names(params)) {
+      e <- .h2o.checkParam(i, params[[name]])
+      if (!nzchar(e)) {
+        params[[name]] <<- .h2o.transformParam(i, params[[name]])
       }
     }
     e
@@ -237,7 +215,8 @@ h2o.getFutureModel <- function(object) {
 
   if(any(nzchar(error)))
     stop(error)
-  
+
+  print(allParams)
   #---------- Create parameter list to pass ----------#
   param_values <- lapply(params, function(i) {
     if(is(i, "H2OFrame"))
@@ -247,6 +226,83 @@ h2o.getFutureModel <- function(object) {
   })
 
   param_values
+}
+
+# Check definition of given parameters in given list of parameters
+# Returns error message or empty string
+# Note: this function has no side-effects!
+.h2o.checkParam <- function(paramDef, paramValue) {
+  e <- ""
+  # Fetch mapping for given Java to R types
+  mapping <- .type.map[paramDef$type,]
+  type    <- mapping[1L, 1L]
+  scalar  <- mapping[1L, 2L]
+  name    <- paramDef$name
+  if (is.na(type))
+    stop("Cannot find type ", paramDef$type, " in .type.map")
+  if (scalar) { # scalar == TRUE
+    if (type == "H2OModel")
+        type <-  "character"
+    if (!inherits(paramValue, type)) {
+      e <- paste0("\"", name , "\" must be of type ", type, ", but got ", class(paramValue), ".\n")
+    } else if ((length(paramDef$values) > 1L) && !(paramValue %in% paramDef$values)) {
+      e <- paste0("\"", name,"\" must be in")
+      for (fact in paramDef$values)
+        e <- paste0(e, " \"", fact, "\",")
+      e <- paste(e, "but got", paramValue)
+    }
+  } else {      # scalar == FALSE
+    if (!inherits(paramValue, type))
+      e <- paste0("vector of ", name, " must be of type ", type, ", but got ", class(paramValue), ".\n")
+  }
+  e
+}
+
+.h2o.transformParam <- function(paramDef, paramValue) {
+  # Fetch mapping for given Java to R types
+  mapping <- .type.map[paramDef$type,]
+  type    <- mapping[1L, 1L]
+  scalar  <- mapping[1L, 2L]
+  name    <- paramDef$name
+  if (scalar) { # scalar == TRUE
+    if (inherits(paramValue, 'numeric') && paramValue ==  Inf) {
+      paramValue <- "Infinity"
+    } else if (inherits(paramValue, 'numeric') && paramValue == -Inf) {
+      paramValue <- "-Infinity"
+    }
+  } else {      # scalar == FALSE
+    k = which(paramValue == Inf | paramValue == -Inf)
+    if (length(k) > 0)
+      for (n in k)
+        if (paramValue[n] == Inf)
+          paramValue[n] <<- "Infinity"
+        else
+          paramValue[n] <<- "-Infinity"
+    if (type == "character")
+      paramValue <- .collapse.char(paramValue)
+    else
+      paramValue <- .collapse(paramValue)
+  }
+  paramValue
+}
+
+.h2o.checkHyperParameters <- function(algo, allParams, hyper_params) {
+
+  error <- lapply(allParams, function(paramDef) {
+      e <- ""
+      name <- paramDef$name
+      hyper_names <- names(hyper_params)
+      # First reject all non-gridable hyper parameters
+      if (!paramDef$gridable && (name %in% hyper_names)) {
+        e <- paste0("argument \"", i$name, "\" is missing, with no default\n")
+      } else if (name %in% hyper_names) { # Check all specified hyper parameters
+        e <- .h2o.checkParam(paramDef, params)
+      }
+      e
+  })
+
+  if(any(nzchar(error)))
+    stop(error)
 }
 
 #' Predict on an H2O Model
