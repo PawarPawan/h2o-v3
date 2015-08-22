@@ -305,8 +305,12 @@ public class KMeans extends ClusteringModelBuilder<KMeansModel,KMeansModel.KMean
         }
 
         Log.info(model._output._model_summary);
-//        Log.info(model._output._scoring_history);
-//        Log.info(((ModelMetricsClustering)model._output._training_metrics).createCentroidStatsTable().toString());
+        Log.info(model._output._scoring_history);
+        Log.info(((ModelMetricsClustering)model._output._training_metrics).createCentroidStatsTable().toString());
+        
+        System.out.println(model._output._model_summary);
+        System.out.println(model._output._scoring_history);
+        System.out.println(((ModelMetricsClustering)model._output._training_metrics).createCentroidStatsTable().toString());
 
         // FIXME: Remove (most of) this code - once it passes...
         // PUBDEV-871: Double-check the training metrics (gathered by computeStatsFillModel) and the scoring logic by scoring on the training set
